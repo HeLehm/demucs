@@ -19,6 +19,10 @@ from .demucs import DConv, rescale_module
 from .states import capture_init
 from .spec import spectro, ispectro
 
+# used for timing
+import time
+import __main__
+
 
 def pad1d(x: torch.Tensor, paddings: tp.Tuple[int, int], mode: str = 'constant', value: float = 0.):
     """Tiny wrapper around F.pad, just to allow for reflect padding on small input.
@@ -687,11 +691,20 @@ class HDemucs(nn.Module):
         return out.to(init)
 
     def forward(self, mix):
+        __main__.forward_times = [time.time()]
+        __main__.forward_time_names = []
+
         x = mix
         length = x.shape[-1]
 
+        __main__.forward_times.append(time.time())
+        __main__.forward_time_names.append("prepad")
         z = self._spec(mix)
+        __main__.forward_times.append(time.time())
+        __main__.forward_time_names.append("spec")
         mag = self._magnitude(z).to(mix.device)
+        __main__.forward_times.append(time.time())
+        __main__.forward_time_names.append("mag")
         x = mag
 
         B, C, Fq, T = x.shape
@@ -776,19 +789,31 @@ class HDemucs(nn.Module):
         # demucs issue #435 ##432
         # NOTE: in this case z already is on cpu
         # TODO: remove this when mps supports complex numbers
+        __main__.forward_times.append(time.time())
+        __main__.forward_time_names.append("before mask")
         x_is_mps = x.device.type == "mps"
         if x_is_mps:
             x = x.cpu()
+        __main__.forward_times.append(time.time())
+        __main__.forward_time_names.append("x device change")
 
         zout = self._mask(z, x)
+        __main__.forward_times.append(time.time())
+        __main__.forward_time_names.append("mask")
         x = self._ispec(zout, length)
+        __main__.forward_times.append(time.time())
+        __main__.forward_time_names.append("ispec")
 
         # back to mps device
         if x_is_mps:
             x = x.to('mps')
+        __main__.forward_times.append(time.time())
+        __main__.forward_time_names.append("x device change 2")
 
         if self.hybrid:
             xt = xt.view(B, S, -1, length)
             xt = xt * stdt[:, None] + meant[:, None]
             x = xt + x
+        __main__.forward_times.append(time.time())
+        __main__.forward_time_names.append("xt + x")
         return x

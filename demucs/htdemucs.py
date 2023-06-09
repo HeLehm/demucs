@@ -23,6 +23,10 @@ from .states import capture_init
 from .spec import spectro, ispectro
 from .hdemucs import pad1d, ScaledEmbedding, HEncLayer, MultiWrap, HDecLayer
 
+# used for timing
+import time
+import __main__
+
 
 class HTDemucs(nn.Module):
     """
@@ -525,6 +529,8 @@ class HTDemucs(nn.Module):
         return training_length
 
     def forward(self, mix):
+        __main__.forward_times = [time.time()]
+        __main__.forward_time_names = []
         length = mix.shape[-1]
         length_pre_pad = None
         if self.use_train_segment:
@@ -535,8 +541,14 @@ class HTDemucs(nn.Module):
                 if mix.shape[-1] < training_length:
                     length_pre_pad = mix.shape[-1]
                     mix = F.pad(mix, (0, training_length - length_pre_pad))
+        __main__.forward_times.append(time.time())
+        __main__.forward_time_names.append("prepad")
         z = self._spec(mix)
+        __main__.forward_times.append(time.time())
+        __main__.forward_time_names.append("spec")
         mag = self._magnitude(z).to(mix.device)
+        __main__.forward_times.append(time.time())
+        __main__.forward_time_names.append("mag")
         x = mag
 
         B, C, Fq, T = x.shape
@@ -629,11 +641,17 @@ class HTDemucs(nn.Module):
         # demucs issue #435 ##432
         # NOTE: in this case z already is on cpu
         # TODO: remove this when mps supports complex numbers
+        __main__.forward_times.append(time.time())
+        __main__.forward_time_names.append("before mask")
         x_is_mps = x.device.type == "mps"
         if x_is_mps:
             x = x.cpu()
+        __main__.forward_times.append(time.time())
+        __main__.forward_time_names.append("x device change")
 
         zout = self._mask(z, x)
+        __main__.forward_times.append(time.time())
+        __main__.forward_time_names.append("mask")
         if self.use_train_segment:
             if self.training:
                 x = self._ispec(zout, length)
@@ -641,10 +659,14 @@ class HTDemucs(nn.Module):
                 x = self._ispec(zout, training_length)
         else:
             x = self._ispec(zout, length)
+        __main__.forward_times.append(time.time())
+        __main__.forward_time_names.append("ispec")
 
         # back to mps device
         if x_is_mps:
             x = x.to("mps")
+        __main__.forward_times.append(time.time())
+        __main__.forward_time_names.append("x device change 2")
 
         if self.use_train_segment:
             if self.training:
@@ -657,4 +679,6 @@ class HTDemucs(nn.Module):
         x = xt + x
         if length_pre_pad:
             x = x[..., :length_pre_pad]
+        __main__.forward_times.append(time.time())
+        __main__.forward_time_names.append("xt + x")
         return x
